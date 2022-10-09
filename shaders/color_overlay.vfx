@@ -1,0 +1,99 @@
+HEADER
+{
+    Description = "Example post processing shader";
+    DevShader = true;
+}
+
+MODES
+{
+    Default();
+    VrForward();
+}
+
+FEATURES
+{
+}
+
+COMMON
+{
+    #include "postprocess/shared.hlsl"
+}
+
+struct VertexInput
+{
+    float3 vPositionOs : POSITION < Semantic( PosXyz ); >;
+    float2 vTexCoord : TEXCOORD0 < Semantic( LowPrecisionUv ); >;
+};
+
+struct PixelInput
+{
+    float2 vTexCoord : TEXCOORD0;
+
+	// VS only
+	#if ( PROGRAM == VFX_PROGRAM_VS )
+		float4 vPositionPs		: SV_Position;
+	#endif
+
+	// PS only
+	#if ( ( PROGRAM == VFX_PROGRAM_PS ) )
+		float4 vPositionSs		: SV_ScreenPosition;
+	#endif
+};
+
+VS
+{
+    PixelInput MainVs( VertexInput i )
+    {
+        PixelInput o;
+        o.vPositionPs = float4(i.vPositionOs.xyz, 1.0f);
+        o.vTexCoord = i.vTexCoord;
+        return o;
+    }
+}
+
+PS
+{
+    #include "postprocess/common.hlsl"
+
+    RenderState( DepthWriteEnable, false );
+    RenderState( DepthEnable, false );
+
+    CreateTexture2D( g_tColorBuffer ) < Attribute( "ColorBuffer" );  	SrgbRead( true ); Filter( MIN_MAG_LINEAR_MIP_POINT ); AddressU( MIRROR ); AddressV( MIRROR ); >;
+
+    float amount < Attribute("coloroverlay.amount"); Default(0); >;
+    float mode < Attribute("coloroverlay.mode"); Default(0); >;
+    float3 color < Attribute("coloroverlay.color"); Default3( 1.0, 1.0, 1.0 ); >;
+
+    float4 MainPs( PixelInput i ) : SV_Target0
+    {
+        float2 vScreenUv = i.vPositionSs.xy / g_vRenderTargetSize;
+
+        float3 screenColor = Tex2D( g_tColorBuffer, vScreenUv.xy ).rgb;
+        
+        switch(mode)
+        {
+            case 0: //lerp
+                return float4(lerp(screenColor, color, amount), 1.0f);
+            case 1: //mutliply
+                return float4(lerp(screenColor, screenColor * color, amount), 1.0f);
+            case 2: //add
+                return float4(lerp(screenColor, min(screenColor + color, float3(1,1,1)), amount), 1.0f);
+            case 3: //subtract
+                return float4(lerp(screenColor, max(screenColor - color, float3(0,0,0)), amount), 1.0f);
+            case 4: //screen
+                return float4(lerp(screenColor, 1.0f - (1.0f - screenColor) * (1.0f - color), amount), 1.0f);
+            case 5: //overlay
+                return float4(lerp(screenColor, screenColor < 0.5f ? 2.0f * screenColor * color : 1.0f - 2.0f * (1.0f - screenColor) * (1.0f - color), amount), 1.0f);
+            case 6: //hard light
+                return float4(lerp(screenColor, color < 0.5f ? 2.0f * screenColor * color : 1.0f - 2.0f * (1.0f - screenColor) * (1.0f - color), amount), 1.0f);
+            case 7: //soft light
+                return float4(lerp(screenColor, screenColor < 0.5f ? screenColor * (1.0f - (1.0f - 2.0f * color) * (1.0f - screenColor)) : screenColor + (2.0f * color - 1.0f) * (sqrt(screenColor) - screenColor), amount), 1.0f);
+            case 8: //lighten
+                return float4(lerp(screenColor, max(screenColor, color), amount), 1.0f);
+            case 9: //darken
+                return float4(lerp(screenColor, min(screenColor, color), amount), 1.0f);
+            default:
+                return float4(screenColor, 1.0f);
+        }
+    }
+}
